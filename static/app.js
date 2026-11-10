@@ -96,21 +96,26 @@ function applyBusinessTheme(){
   select.replaceChildren(...state.businesses.map(b=>new Option(b.name,b.id)),new Option('접속 사업단 설정…','welcome'));
   select.value=state.businessId;
 }
-async function switchBusiness(id){setBusiness(id);await refresh();setView(state.view)}
+async function switchBusiness(id){setBusiness(id);await refresh(false);setView(state.view)}
 function setView(view) {
   if (view === 'entry') view = 'ledger';
   if (view === 'production' && !productionEnabled()) view = 'ledger';
+  if ((view==='work' && !productionEnabled()) || (view==='cafe' && state.businessId!=='cafe')) view = 'counts';
   state.view = view;
   localStorage.setItem('inventoryView',view);
   const report = ['daily','monthly','calendar'].includes(view);
   const manage = ['items','partners','import'].includes(view);
-  const group = report ? 'daily' : manage ? 'items' : view==='production' ? 'ledger' : view;
+  const operations = Object.hasOwn(operationTitles,view);
+  const group = report ? 'daily' : manage ? 'items' : operations ? 'counts' : view==='production' ? 'ledger' : view;
   $('#report-tabs').hidden = !report;
   $('#manage-tabs').hidden = !manage;
+  $('#operations-tabs').hidden = !operations;
+  $('#operations-tabs [data-view="work"]').hidden = !productionEnabled();
+  $('#operations-tabs [data-view="cafe"]').hidden = state.businessId!=='cafe';
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===group));
   document.querySelectorAll('.subnav .tab').forEach(x=>x.classList.toggle('active',x.dataset.view===view));
   document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===`view-${view}`));
-  $('#page-title').textContent={dashboard:'홈',ledger:'거래 장부',production:'완성품 만들기',daily:'일일 운영일지',monthly:'월간 거래요약',calendar:'달력 대장',items:'품목 관리',partners:'기관·거래처',import:'엑셀 가져오기',admin:'관리자 대시보드'}[view];
+  $('#page-title').textContent={...operationTitles,dashboard:'홈',ledger:'거래 장부',production:'완성품 만들기',daily:'일일 운영일지',monthly:'월간 거래요약',calendar:'달력 대장',items:'품목 관리',partners:'기관·거래처',import:'엑셀 가져오기',admin:'관리자 대시보드'}[view];
   render();
 }
 document.querySelectorAll('[data-view]').forEach(x=>x.addEventListener('click',()=>setView(x.dataset.view)));
@@ -132,7 +137,7 @@ $('#business-switcher').addEventListener('change', async event => {
     $('#app-shell').inert = false;
   }
 });
-function render(){document.body.dataset.admin=state.view==='admin'?'true':'false';if(state.view==='dashboard')renderDashboard();if(state.view==='entry')renderEntry();if(state.view==='daily')renderDaily();if(state.view==='monthly')renderMonthly();if(state.view==='calendar')renderCalendar();if(state.view==='ledger')renderLedger();if(state.view==='production')renderProduction();if(state.view==='items')renderItems();if(state.view==='partners')renderPartners();if(state.view==='import')renderImport();if(state.view==='admin')renderAdmin()}
+function render(){document.body.dataset.admin=state.view==='admin'?'true':'false';if(state.view==='dashboard')renderDashboard();if(state.view==='entry')renderEntry();if(state.view==='daily')renderDaily();if(state.view==='monthly')renderMonthly();if(state.view==='calendar')renderCalendar();if(state.view==='ledger')renderLedger();if(state.view==='production')renderProduction();if(state.view==='items')renderItems();if(state.view==='partners')renderPartners();if(state.view==='import')renderImport();if(state.view==='admin')renderAdmin();if(Object.hasOwn(operationTitles,state.view))renderOperations(state.view)}
 const printOptions={daily:[['no','순번'],['item','품명'],['unit','단위'],['unitPrice','단가'],['tax','면·과세'],['opening','시작재고'],['purchase','매입'],['otherIn','조정·반품 입고'],['sale','매출'],['otherOut','조정·반품 출고'],['closing','종료일 재고'],['delta','전일 대비 증감'],['salesAmount','판매금액'],['note','비고']],monthly:[['kpiPurchase','큰 네모: 월 매입'],['kpiSale','큰 네모: 월 매출'],['kpiIssue','큰 네모: 월 불출'],['kpiItems','큰 네모: 조회 품목'],['item','품명'],['unit','단위'],['opening','월초재고'],['purchase','매입'],['sale','매출'],['issue','불출'],['adjustment','조정'],['closing','월말재고'],['purchaseAmount','매입금액'],['salesAmount','매출금액']]};
 function openPrintDialog(kind,options=printOptions[kind]||printOptions.daily){
   let dialog=$('#print-dialog');
@@ -170,7 +175,7 @@ const homeWidgetLabels = {
 
 function homeWidgets(summary, items, transactions) {
   const count = (label, value, unit='') => `<div class="card kpi"><div class="label">${label}</div><div class="value">${value}<small>${unit}</small></div></div>`;
-  const ranked = items.filter(i=>i.item_type!=='SERVICE').sort((a,b)=>{
+  const ranked = items.filter(i=>i.item_type!=='SERVICE' && i.stock_mode!=='snapshot').sort((a,b)=>{
     const rank = i => i.stock<=0 ? 0 : i.stock<=i.min_stock ? 1 : 2;
     return rank(a)-rank(b) || a.stock-b.stock || a.name.localeCompare(b.name,'ko');
   });
@@ -192,7 +197,30 @@ function renderDashboard() {
   const blocks = Object.entries(homeWidgets(state.summary,state.items,state.transactions))
     .filter(([key])=>business?.widgets?.[key]!==false)
     .map(([key, html])=>`<div class="${['stock','recent'].includes(key)?'home-wide':''}">${html}</div>`);
-  $('#view-dashboard').innerHTML = `<div class="home-grid">${blocks.join('')||'<p>표시할 홈 항목이 없습니다.</p>'}</div>`;
+  const dailyItems = state.items.filter(i=>i.item_type==='STOCK' && i.count_frequency==='daily').length;
+  const actions = [
+    {label:'거래 기록',detail:'매입·판매·재고 조정',action:"openTransactionDialog()",icon:'↗'},
+    {label:'오늘 실사',detail:`매일 확인 품목 ${dailyItems}개`,action:"openTodayCounts()",icon:'✓'},
+    ...(productionEnabled() ? [{label:'작업일지',detail:'작업 실적과 생산 재고',action:"setView('work')",icon:'▥'}] :
+      state.businessId==='cafe' ? [{label:'카페 레시피',detail:'판매 메뉴와 재료 연결',action:"setView('cafe')",icon:'◈'}] : []),
+    {label:'발주 확인',detail:'입고 예정과 부족 예상',action:"setView('planning')",icon:'→'},
+  ];
+  $('#view-dashboard').innerHTML = `
+    <section class="workspace-hero"><div><p class="eyebrow">오늘의 업무</p>
+      <h2>${escapeHtml(business?.name||'사업단')}의 하루를 한눈에.</h2>
+      <p>거래를 기록하고, 필요한 재고를 확인하세요.</p></div>
+      <button class="button primary" onclick="openTransactionDialog()">＋ 거래 입력</button></section>
+    <div class="workspace-actions">${actions.map(a=>`<button type="button" class="workspace-action" onclick="${a.action}">
+      <span class="action-icon" aria-hidden="true">${a.icon}</span><span><strong>${a.label}</strong><small>${a.detail}</small></span>
+      <span class="action-arrow" aria-hidden="true">↗</span></button>`).join('')}</div>
+    <div class="workspace-section-title"><h2>사업단 현황</h2><span>${today()} 기준</span></div>
+    <div class="home-grid">${blocks.join('')||'<p>관리자에서 표시할 홈 항목을 설정할 수 있습니다.</p>'}</div>`;
+}
+
+function openTodayCounts(){
+  const preferences = operationSettings.get(state.businessId);
+  if(preferences){preferences.scope='daily';preferences.date=today();}
+  setView('counts');
 }
 
 function renderEntry(){
@@ -227,6 +255,7 @@ function renderEntry(){
       <div class="table-wrap">${transactionTable(state.transactions.filter(x=>x.transaction_date===today()))}</div></div>`;
 
   const form = $('#entry-form');
+  form.dataset.requestId = productionToken();
   const {transaction_type, adjustment_mode, item_id, quantity} = form.elements;
   const adjustmentField = form.querySelector('[data-adjustment]');
   const quantityLabel = quantity.labels[0];
@@ -277,6 +306,7 @@ async function saveTransaction(event) {
   error.hidden = true;
   const data = Object.fromEntries(new FormData(form));
   const business = state.businessId;
+  if(business==='cafe' && data.transaction_type==='SALE') data.request_id = form.dataset.requestId;
   let result;
   submit.disabled = true;
   try {
@@ -298,7 +328,8 @@ async function saveTransaction(event) {
     submit.disabled = false;
   }
   form.closest('dialog')?.close();
-  toast(result.unchanged ? '현재 재고와 같아 조정 내역을 기록하지 않았습니다.' : '거래가 저장되었습니다.');
+  toast(result.unchanged ? '현재 재고와 같아 조정 내역을 기록하지 않았습니다.' :
+    result.low_materials?.length ? `거래 저장 · 재료 장부 재고 확인: ${result.low_materials.join(', ')}` : '거래가 저장되었습니다.');
   try { await refresh(); }
   catch (err) { toast('거래는 저장됐지만 목록을 새로고침하지 못했습니다.'); }
 }
@@ -320,7 +351,7 @@ async function renderItems(){
     const items=await api('/api/items?all=1');
     const e=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     const activeCount=items.filter(i=>i.active).length;
-    target.innerHTML=`<div class="card section"><div class="card-head"><div><h2>품목 관리</h2><small>재고품은 수량을 관리하고, 용역·서비스는 매출만 관리합니다.</small></div></div><div class="card-body"><form id="item-form"><div class="form-grid three"><div class="field"><label>품목명</label><input name="name" placeholder="예: 종량제봉투(75L)" required></div><div class="field"><label>품목 유형</label><select name="item_type"><option value="STOCK">재고품</option><option value="SERVICE">용역·서비스</option></select></div><div class="field"><label>단위</label><input name="unit" value="개"></div><div class="field"><label>기본 단가(원)</label><input type="number" name="unit_price" value="0" min="0"></div><div class="field"><label>과세구분</label><select name="tax_type"><option>면세</option><option>과세</option></select></div><div class="field"><label>최소재고</label><input type="number" name="min_stock" value="0" min="0"></div></div><div class="form-actions"><button class="button primary">품목 추가</button></div></form></div></div><div class="card"><div class="card-head"><div><h2>사용 품목 ${activeCount}개</h2><small>사용중지 ${items.length-activeCount}개${state.admin?' · 관리자 완전삭제 가능':''}</small></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>상태</th><th>품목명</th><th>유형</th><th>단위</th><th>기본단가</th><th>과세</th><th>최소재고</th><th>현재재고</th><th>관리</th></tr></thead><tbody>${items.map(i=>`<tr class="${i.active?'':'inactive-row'}"><td><span class="badge ${i.active?'purchase':'inactive'}">${i.active?'사용중':'사용중지'}</span></td><td><strong>${e(i.name)}</strong></td><td>${i.item_type==='SERVICE'?'용역·서비스':'재고품'}</td><td>${e(i.unit)}</td><td>${money(i.unit_price)}</td><td>${e(i.tax_type)}</td><td>${i.item_type==='SERVICE'?'':qty(i.min_stock)}</td><td class="${i.item_type!=='SERVICE'&&i.active&&i.stock<=i.min_stock?'danger-text':''}">${i.item_type==='SERVICE'?'':qty(i.stock)+' '+e(i.unit)}</td><td><div class="quick-actions">${i.active?`<button class="button ghost" onclick="editItem(${i.id})">수정</button><button class="button danger" onclick="deactivateItem(${i.id})">삭제</button>`:`<button class="button ghost" onclick="restoreItem(${i.id})">복구</button>`}${state.admin?`<button class="button danger" onclick="hardDeleteItem(${i.id})">완전삭제</button>`:''}</div></td></tr>`).join('')||'<tr><td colspan="9" class="empty">등록된 품목이 없습니다.</td></tr>'}</tbody></table></div></div>`;
+    target.innerHTML=`<div class="card section"><div class="card-head"><div><h2>품목 관리</h2><small>재고품은 수량을 관리하고, 용역·서비스는 매출만 관리합니다.</small></div></div><div class="card-body"><form id="item-form"><div class="form-grid three"><div class="field"><label>품목명</label><input name="name" placeholder="예: 종량제봉투(75L)" required></div><div class="field"><label>품목 유형</label><select name="item_type"><option value="STOCK">재고품</option><option value="SERVICE">용역·서비스</option></select></div><div class="field"><label>단위</label><input name="unit" value="개"></div><div class="field"><label>기본 단가(원)</label><input type="number" name="unit_price" value="0" min="0"></div><div class="field"><label>과세구분</label><select name="tax_type"><option>면세</option><option>과세</option></select></div><div class="field"><label>최소재고</label><input type="number" name="min_stock" value="0" min="0"></div></div><div class="form-actions"><button class="button primary">품목 추가</button></div></form></div></div><div class="card"><div class="card-head"><div><h2>사용 품목 ${activeCount}개</h2><small>사용중지 ${items.length-activeCount}개${state.admin?' · 관리자 완전삭제 가능':''}</small></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>상태</th><th>품목명</th><th>유형</th><th>단위</th><th>기본단가</th><th>과세</th><th>최소재고</th><th>현재재고</th><th>관리</th></tr></thead><tbody>${items.map(i=>`<tr class="${i.active?'':'inactive-row'}"><td><span class="badge ${i.active?'purchase':'inactive'}">${i.active?'사용중':'사용중지'}</span></td><td><strong>${e(i.name)}</strong></td><td>${i.item_type==='SERVICE'?'용역·서비스':'재고품'}</td><td>${e(i.unit)}</td><td>${money(i.unit_price)}</td><td>${e(i.tax_type)}</td><td>${i.item_type==='SERVICE'?'':qty(i.min_stock)}</td><td class="${i.item_type!=='SERVICE'&&i.stock_mode!=='snapshot'&&i.active&&i.stock<=i.min_stock?'danger-text':''}">${i.item_type==='SERVICE'?'':i.stock_mode==='snapshot'?(i.last_count?qty(i.last_count.quantity)+' '+e(i.unit)+' · '+i.last_count.report_date:'미조사'):qty(i.stock)+' '+e(i.unit)}</td><td><div class="quick-actions">${i.active?`<button class="button ghost" onclick="editItem(${i.id})">수정</button><button class="button danger" onclick="deactivateItem(${i.id})">삭제</button>`:`<button class="button ghost" onclick="restoreItem(${i.id})">복구</button>`}${state.admin?`<button class="button danger" onclick="hardDeleteItem(${i.id})">완전삭제</button>`:''}</div></td></tr>`).join('')||'<tr><td colspan="9" class="empty">등록된 품목이 없습니다.</td></tr>'}</tbody></table></div></div>`;
     target.insertAdjacentHTML('beforeend',`<dialog id="item-edit-dialog" class="edit-dialog"><div class="edit-dialog-head"><div><h2>품목 정보 수정</h2><small id="edit-item-caption">등록 정보를 한 번에 확인하고 수정합니다.</small></div><button type="button" class="dialog-close" onclick="closeItemEditor()" aria-label="닫기">×</button></div><form id="item-edit-form"><input type="hidden" name="id"><div class="form-grid"><div class="field edit-wide"><label>품목명</label><input name="name" required></div><div class="field"><label>품목 유형</label><select name="item_type"><option value="STOCK">재고품</option><option value="SERVICE">용역·서비스</option></select></div><div class="field"><label>단위</label><input name="unit" required></div><div class="field"><label>기본 단가(원)</label><input type="number" name="unit_price" min="0" required></div><div class="field"><label>과세구분</label><select name="tax_type"><option value="면세">면세</option><option value="과세">과세</option></select></div><div class="field"><label>최소재고</label><input type="number" name="min_stock" min="0" required></div></div><div class="form-actions"><button type="button" class="button ghost" onclick="closeItemEditor()">취소</button><button class="button primary">변경사항 저장</button></div></form></dialog>`);
     target.querySelector('#item-form').addEventListener('submit',async ev=>{ev.preventDefault();const data=Object.fromEntries(new FormData(ev.target));try{await api('/api/items',{method:'POST',body:JSON.stringify(data)});toast('품목이 추가되었습니다.');$('#item-create-dialog')?.close();await refresh()}catch(err){toast(err.message)}});
     $('#item-edit-form').addEventListener('submit',saveItemEdit);
@@ -366,7 +397,7 @@ async function renderItems(){
     window.allItems=items;window.itemManagementItems=items;
   }catch(err){target.innerHTML=`<div class="card"><div class="card-body empty">${err.message}</div></div>`}
 }
-function openStocktakeDialog(target, items){
+function openStocktakeDialog(target, items, initialScope='all'){
   const stockItems = items.filter(item=>item.active && item.item_type==='STOCK');
   const dialog = document.createElement('dialog');
   dialog.className = 'edit-dialog';
@@ -374,27 +405,46 @@ function openStocktakeDialog(target, items){
   dialog.innerHTML = `
     <div class="edit-dialog-head"><div>
       <h2 id="stocktake-title">재고조사표 Word 다운로드</h2>
-      <small>현재 사업단의 사용 중인 재고품 ${stockItems.length}개</small>
+      <small>현재 사업단의 사용 중인 재고품만 포함합니다.</small>
     </div></div>
     <form method="dialog">
       ${stockItems.length ? `<div class="field">
+        <label for="stocktake-scope">조사표 범위</label>
+        <select id="stocktake-scope">
+          <option value="all">전체 재고품</option>
+          <option value="daily">매일 확인 품목</option>
+          <option value="monthly">월말 확인 품목</option>
+        </select>
         <label for="stocktake-order">품목 정렬</label>
         <select id="stocktake-order" name="order" autofocus>
           <option value="registration">등록순</option>
           <option value="name">가나다순</option>
         </select>
+        <small data-stocktake-count></small>
       </div>` : '<p>조사표에 넣을 재고품이 없습니다.</p>'}
       <div class="form-actions">
         <button class="button ghost" value="cancel">${stockItems.length ? '취소' : '닫기'}</button>
         ${stockItems.length ? '<button class="button primary" value="download">다운로드</button>' : ''}
       </div>
     </form>`;
+  const scope = dialog.querySelector('#stocktake-scope');
+  const selectedItems = ()=>stockItems.filter(i=>scope.value==='all' || (i.count_frequency||'monthly')===scope.value);
+  if(scope){
+    scope.value=initialScope;
+    scope.onchange=()=>{
+      const count = selectedItems().length;
+      dialog.querySelector('[data-stocktake-count]').textContent=`선택한 범위의 재고품 ${count}개`;
+      dialog.querySelector('[value="download"]').disabled=!count;
+    };
+    scope.onchange();
+  }
   dialog.addEventListener('close',()=>{
     if(dialog.returnValue==='download'){
       const collator = new Intl.Collator('ko-KR',{numeric:true});
-      const byName = dialog.querySelector('select').value==='name';
-      stockItems.sort((a,b)=>(byName ? collator.compare(a.name,b.name) : 0) || a.id-b.id);
-      downloadStocktake(stockItems);
+      const byName = dialog.querySelector('#stocktake-order').value==='name';
+      const rows = selectedItems();
+      rows.sort((a,b)=>(byName ? collator.compare(a.name,b.name) : 0) || a.id-b.id);
+      if(rows.length) downloadStocktake(rows);
     }
     dialog.remove();
   },{once:true});
@@ -459,7 +509,7 @@ async function renderMonthly(){
     const rows=summary.rows;
     const totals=rows.reduce((a,r)=>({purchase:a.purchase+r.purchase_qty,sale:a.sale+r.sale_qty,issue:a.issue+r.issue_qty,purchaseAmount:a.purchaseAmount+r.purchase_amount,salesAmount:a.salesAmount+r.sales_amount}),{purchase:0,sale:0,issue:0,purchaseAmount:0,salesAmount:0});
     const e=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-    target.innerHTML=`<div class="toolbar"><div class="toolbar-left"><input type="month" id="monthly-date" value="${summary.month}"><button class="button primary" onclick="loadMonthly()">조회</button></div><div class="toolbar-right"><button class="button ghost" onclick="openPrintDialog('monthly')">인쇄</button></div></div><div class="grid kpis monthly-kpis"><div class="card kpi" data-print-key="kpiPurchase"><div class="label">월 매입</div><div class="value">${qty(totals.purchase)}<small> 건수량</small></div><div class="hint">${money(totals.purchaseAmount)}</div></div><div class="card kpi" data-print-key="kpiSale"><div class="label">월 매출</div><div class="value">${qty(totals.sale)}<small> 건수량</small></div><div class="hint">${money(totals.salesAmount)}</div></div><div class="card kpi" data-print-key="kpiIssue"><div class="label">월 불출</div><div class="value">${qty(totals.issue)}<small> 건수량</small></div><div class="hint">기관 제공 포함</div></div><div class="card kpi" data-print-key="kpiItems"><div class="label">조회 품목</div><div class="value">${qty(rows.length)}<small> 개</small></div><div class="hint">${summary.month}</div></div></div><div class="card"><div class="card-head"><div><h2>${summary.month} 월간 거래요약</h2><small>거래 원장을 기준으로 거래량·금액과 월초·월말 재고를 자동 계산합니다.</small></div></div><div class="table-wrap"><table class="data-table monthly-table"><thead><tr><th data-print-key="item">품명</th><th data-print-key="unit">단위</th><th data-print-key="opening">월초재고</th><th data-print-key="purchase">매입</th><th data-print-key="sale">매출</th><th data-print-key="issue">불출</th><th data-print-key="adjustment">조정</th><th data-print-key="closing">월말재고</th><th data-print-key="purchaseAmount">매입금액</th><th data-print-key="salesAmount">매출금액</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-print-key="item"><strong>${e(r.item_name)}</strong>${r.active?'':' <span class="badge inactive">사용중지</span>'}</td><td data-print-key="unit">${e(r.unit)}</td><td data-print-key="opening">${r.item_type==='SERVICE'?'':qty(r.opening_stock)}</td><td data-print-key="purchase">${qty(r.purchase_qty)}</td><td data-print-key="sale">${qty(r.sale_qty)}</td><td data-print-key="issue">${qty(r.issue_qty)}</td><td data-print-key="adjustment">${qty(r.adjustment)}</td><td data-print-key="closing" class="${r.closing_stock<0?'danger-text':''}">${r.item_type==='SERVICE'?'':qty(r.closing_stock)}</td><td data-print-key="purchaseAmount">${money(r.purchase_amount)}</td><td data-print-key="salesAmount">${money(r.sales_amount)}</td></tr>`).join('')||'<tr><td colspan="10" class="empty">이 달의 품목이 없습니다.</td></tr>'}</tbody></table></div></div>`;
+    target.innerHTML=`<div class="toolbar"><div class="toolbar-left"><input type="month" id="monthly-date" value="${summary.month}"><button class="button primary" onclick="loadMonthly()">조회</button></div><div class="toolbar-right"><button class="button ghost" onclick="openPrintDialog('monthly')">인쇄</button></div></div><div class="grid kpis monthly-kpis"><div class="card kpi" data-print-key="kpiPurchase"><div class="label">월 매입</div><div class="value">${qty(totals.purchase)}<small> 건수량</small></div><div class="hint">${money(totals.purchaseAmount)}</div></div><div class="card kpi" data-print-key="kpiSale"><div class="label">월 매출</div><div class="value">${qty(totals.sale)}<small> 건수량</small></div><div class="hint">${money(totals.salesAmount)}</div></div><div class="card kpi" data-print-key="kpiIssue"><div class="label">월 불출</div><div class="value">${qty(totals.issue)}<small> 건수량</small></div><div class="hint">기관 제공 포함</div></div><div class="card kpi" data-print-key="kpiItems"><div class="label">조회 품목</div><div class="value">${qty(rows.length)}<small> 개</small></div><div class="hint">${summary.month}</div></div></div><div class="card"><div class="card-head"><div><h2>${summary.month} 월간 거래요약</h2><small>거래 원장을 기준으로 거래량·금액과 월초·월말 재고를 자동 계산합니다.</small></div></div><div class="table-wrap"><table class="data-table monthly-table"><thead><tr><th data-print-key="item">품명</th><th data-print-key="unit">단위</th><th data-print-key="opening">월초재고</th><th data-print-key="purchase">매입</th><th data-print-key="sale">매출</th><th data-print-key="issue">불출</th><th data-print-key="adjustment">조정</th><th data-print-key="closing">월말재고</th><th data-print-key="purchaseAmount">매입금액</th><th data-print-key="salesAmount">매출금액</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-print-key="item"><strong>${e(r.item_name)}</strong>${r.active?'':' <span class="badge inactive">사용중지</span>'}</td><td data-print-key="unit">${e(r.unit)}</td><td data-print-key="opening">${r.item_type==='SERVICE'?'':stockDisplay(r.opening_stock)}</td><td data-print-key="purchase">${qty(r.purchase_qty)}</td><td data-print-key="sale">${qty(r.sale_qty)}</td><td data-print-key="issue">${qty(r.issue_qty)}</td><td data-print-key="adjustment">${qty(r.adjustment)}</td><td data-print-key="closing" class="${r.closing_stock<0?'danger-text':''}">${r.item_type==='SERVICE'?'':stockDisplay(r.closing_stock)}</td><td data-print-key="purchaseAmount">${money(r.purchase_amount)}</td><td data-print-key="salesAmount">${money(r.sales_amount)}</td></tr>`).join('')||'<tr><td colspan="10" class="empty">이 달의 품목이 없습니다.</td></tr>'}</tbody></table></div></div>`;
   }catch(err){target.innerHTML=`<div class="card"><div class="card-body empty">${err.message}</div></div>`}
 }
 async function loadMonthly(){window.monthlyDate=$('#monthly-date').value||today().slice(0,7);await renderMonthly()}
@@ -827,7 +877,7 @@ async function handleWorkbookUpload(file){
 const escapeHtml=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function transactionTable(rows){
   if(!rows.length)return '<div class="empty">조건에 맞는 거래가 없습니다.</div>';
-  return `<table class="data-table transaction-table"><thead><tr><th>일자</th><th>구분</th><th>품목</th><th>기관·거래처</th><th>수량</th><th>단가</th><th>금액</th><th>비고</th><th>입력</th><th></th></tr></thead><tbody>${rows.map(t=>`<tr><td>${t.transaction_date}</td><td><span class="badge ${t.transaction_type.toLowerCase().replace('_in','').replace('_out','')}">${escapeHtml(transactionLabel(t))}</span></td><td><strong>${escapeHtml(t.item_name)}</strong></td><td>${escapeHtml(t.partner_name||'-')}</td><td>${qty(t.quantity)} ${escapeHtml(t.unit)}</td><td>${money(t.unit_price)}</td><td>${money(t.quantity*t.unit_price)}</td><td class="note-cell">${escapeHtml(t.note||'')}</td><td><span class="badge ${t.source==='excel'?'inactive':'purchase'}">${t.source==='excel'?'엑셀':isProductionMovement(t)?'생산':'직접'}</span></td><td>${isProductionMovement(t)?'<span class="stock-sub">생산 기록</span>':t.source==='excel'?'<span class="stock-sub">원본 관리</span>':`<button class="button danger" onclick="removeTx(${t.id})">삭제</button>`}</td></tr>`).join('')}</tbody></table>`;
+  return `<table class="data-table transaction-table"><thead><tr><th>일자</th><th>구분</th><th>품목</th><th>기관·거래처</th><th>수량</th><th>단가</th><th>금액</th><th>비고</th><th>입력</th><th></th></tr></thead><tbody>${rows.map(t=>`<tr><td>${t.transaction_date}</td><td><span class="badge ${t.transaction_type.toLowerCase().replace('_in','').replace('_out','')}">${escapeHtml(transactionLabel(t))}</span></td><td><strong>${escapeHtml(t.item_name)}</strong></td><td>${escapeHtml(t.partner_name||'-')}</td><td>${qty(t.quantity)} ${escapeHtml(t.unit)}</td><td>${money(t.unit_price)}</td><td>${money(t.quantity*t.unit_price)}</td><td class="note-cell">${escapeHtml(t.note||'')}</td><td><span class="badge ${t.source==='excel'?'inactive':'purchase'}">${t.source==='excel'?'엑셀':managedMovement(t)?transactionLabel(t):'직접'}</span></td><td>${managedMovement(t)?'<span class="stock-sub">연결 기록</span>':t.source==='excel'?'<span class="stock-sub">원본 관리</span>':`<button class="button danger" onclick="removeTx(${t.id})">삭제</button>`}</td></tr>`).join('')}</tbody></table>`;
 }
 
 let dailyQuery = null;

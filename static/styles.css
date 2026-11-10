@@ -235,6 +235,20 @@ body:not([data-admin=true])[data-theme=stone] .admin-link:is(:hover,:focus-visib
 #transaction-dialog .field, #transaction-dialog .field :is(input,select) { min-width:0; }
 #transaction-dialog .field :is(input,select) { width:100%; }
 #entry-form [hidden] { display:none; }
+#operations-tabs [hidden], .operation-card [hidden] { display:none; }
+.operation-card .card-body { display:grid; gap:14px; }
+.operation-card .form-actions { margin-top:0; flex-wrap:wrap; }
+.operation-card .table-wrap { overflow-x:auto; }
+.operation-card input[type=number] { width:100%; min-width:70px; }
+.operation-card input, .operation-card select { min-width:0; }
+.operation-card .data-table td { vertical-align:middle; }
+.operation-note { color:var(--muted); font-size:13px; margin:0; }
+.operation-error { color:#9a2530; background:#fff0f1; padding:10px 12px; border-radius:8px; margin:0; }
+.operation-line { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto; gap:12px; align-items:end; margin-bottom:10px; }
+.operation-switch { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.operation-card .data-table .count-cell { min-width:105px; }
+.operation-card .data-table .count-note { min-width:140px; }
+@media (max-width:720px) { .operation-line { grid-template-columns:1fr; } }
 #transaction-dialog .entry-error {
   margin:0 0 14px; padding:10px 12px; border:1px solid #f1c7c7;
   border-radius:8px; background:#fff0f0; color:#8c3030; line-height:1.5;

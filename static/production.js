@@ -8,8 +8,16 @@ function isProductionMovement(row) {
   return row.source?.startsWith('production:');
 }
 
+function managedMovement(row) {
+  return isProductionMovement(row) || ['count:','cafe:','order:'].some(prefix=>row.source?.startsWith(prefix));
+}
+
 function transactionLabel(row) {
   if (isProductionMovement(row)) return row.transaction_type==='ADJUST_IN' ? '생산 입고' : '생산 출고';
+  if (row.source?.startsWith('count:')) return '실사 조정';
+  if (row.source?.startsWith('cafe:')) return '레시피 사용';
+  if (row.source?.startsWith('order:')) return '발주 입고';
+  if (row.source?.startsWith('waste:')) return '폐기';
   return labels[row.transaction_type] || row.transaction_type;
 }
 
@@ -33,7 +41,7 @@ async function renderProduction() {
 }
 
 function buildProduction(target, data, business) {
-  const items = state.items.filter(item=>item.item_type==='STOCK');
+  const items = state.items.filter(item=>item.item_type==='STOCK' && item.stock_mode!=='snapshot');
   const byId = new Map(items.map(item=>[item.id,item]));
   const optionList = (selected, excluded)=>items.filter(item=>item.id!==excluded).map(item=>
     `<option value="${item.id}" ${item.id===selected?'selected':''}>${escapeHtml(item.name)} (${escapeHtml(item.unit)})</option>`
@@ -48,6 +56,7 @@ function buildProduction(target, data, business) {
   }).join('');
   target.innerHTML = `
     <button type="button" class="button ghost section" onclick="setView('ledger')">← 거래 장부</button>
+    <button type="button" class="button ghost section" onclick="setView('work')">작업일지</button>
     <div class="card section">
       <div class="card-head"><div><h2>완성품 선택</h2><small>생산을 저장하면 재료가 차감되고 완성품이 입고됩니다.</small></div></div>
       <div class="card-body"><div class="field"><label for="production-finished">완성품</label>

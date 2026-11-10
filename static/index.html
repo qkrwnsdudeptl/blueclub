@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>erp비스무리 | 로컬 재고관리</title>
   <link rel="preload" href="/static/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=11" />
+  <link rel="stylesheet" href="/static/styles.css?v=12" />
+  <link rel="stylesheet" href="/static/workspace.css?v=1" media="screen" />
+  <link rel="stylesheet" href="/static/admin.css?v=1" media="screen" />
 </head>
 <body>
   <main id="welcome-page" class="welcome-page" aria-labelledby="welcome-title" hidden>
@@ -26,10 +28,11 @@
   </main>
   <div class="app-shell" id="app-shell" hidden>
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">E</span><div><strong>erp비스무리</strong><small>LOCAL INVENTORY</small></div></div>
+      <div class="brand"><span class="brand-mark">E</span><div><strong>erp비스무리</strong><small>우리 사업단의 업무 공간</small></div></div>
       <nav>
         <button class="nav-item active" data-view="dashboard"><span>▦</span> 홈</button>
         <button class="nav-item" data-view="ledger"><span>☷</span> 거래</button>
+        <button class="nav-item" data-view="counts"><span>✓</span> 운영</button>
         <button class="nav-item" data-view="daily"><span>▤</span> 보고서</button>
         <button class="nav-item" data-view="items"><span>□</span> 관리</button>
       </nav>
@@ -43,6 +46,12 @@
       <nav id="manage-tabs" class="subnav print-hide" aria-label="관리" hidden>
         <button class="tab" data-view="items">품목 관리</button><button class="tab" data-view="partners">기관·거래처</button><button class="tab" data-view="import">엑셀 가져오기</button>
       </nav>
+      <nav id="operations-tabs" class="subnav print-hide" aria-label="운영" hidden>
+        <button class="tab" data-view="counts">재고 실사</button>
+        <button class="tab" data-view="work" hidden>작업일지</button>
+        <button class="tab" data-view="cafe" hidden>카페 레시피</button>
+        <button class="tab" data-view="planning">발주·생산능력</button>
+      </nav>
       <section id="view-dashboard" class="view active"></section>
       <section id="view-entry" class="view"></section>
       <section id="view-daily" class="view"></section>
@@ -50,6 +59,10 @@
       <section id="view-calendar" class="view"></section>
       <section id="view-ledger" class="view"></section>
       <section id="view-production" class="view"></section>
+      <section id="view-counts" class="view"></section>
+      <section id="view-work" class="view"></section>
+      <section id="view-cafe" class="view"></section>
+      <section id="view-planning" class="view"></section>
       <section id="view-items" class="view"></section>
       <section id="view-partners" class="view"></section>
       <section id="view-import" class="view"></section>
@@ -74,7 +87,8 @@
       <div class="form-actions"><button type="button" class="button primary" id="notice-confirm">확인</button></div>
     </div>
   </dialog>
-  <script src="/static/production.js?v=1"></script>
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/production.js?v=2"></script>
+  <script src="/static/operations.js?v=1"></script>
+  <script src="/static/app.js?v=18"></script>
 </body>
 </html>

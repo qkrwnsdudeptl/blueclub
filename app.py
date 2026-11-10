@@ -22,6 +22,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import operations as ops
 from production import SOURCE_PREFIX, list_production, record_production, save_recipe
 
 
@@ -265,6 +266,7 @@ def init_db() -> None:
             db.execute("ALTER TABLE items ADD COLUMN archived_at TEXT")
         if "import_key" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN import_key TEXT")
+        ops.init_operations(db)
         if ACTIVE_BUSINESS.get() == "delivery":
             db.execute("CREATE TABLE IF NOT EXISTS welcome_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             db.execute(
@@ -299,7 +301,7 @@ def create_daily_backup() -> None:
 
 
 BASE_DATA_TABLES = ("items", "partners", "transactions", "daily_reports", "daily_item_notes", "stock_snapshots")
-DATA_TABLES = BASE_DATA_TABLES + ("production_components", "production_batches")
+DATA_TABLES = BASE_DATA_TABLES + ("production_components", "production_batches") + ops.TABLES
 MAX_RESTORE_BYTES = 32 * 1024 * 1024
 
 
@@ -380,9 +382,19 @@ def current_stock(db: sqlite3.Connection, item_id: int) -> int:
 
 
 def get_items(db, include_inactive=False):
-    where = "" if include_inactive else " WHERE active = 1"
-    rows = db.execute(f"SELECT * FROM items{where} ORDER BY active DESC, id").fetchall()
-    return [{**dict(r), "stock": current_stock(db, r["id"])} for r in rows]
+    where = "" if include_inactive else " WHERE i.active = 1"
+    rows = db.execute(f"""SELECT i.*,COALESCE(p.frequency,'monthly') count_frequency,
+        COALESCE(p.mode,'ledger') stock_mode,p.lead_days FROM items i
+        LEFT JOIN inventory_policy p ON i.id=p.item_id{where} ORDER BY i.active DESC,i.id""").fetchall()
+    result = []
+    for row in rows:
+        item = {**dict(row), "stock": current_stock(db, row["id"])}
+        if row["stock_mode"] == "snapshot":
+            last = db.execute("""SELECT report_date,quantity FROM stock_snapshots WHERE item_id=? AND report_date<=?
+                ORDER BY report_date DESC,(source='count') DESC LIMIT 1""", (row["id"],date.today().isoformat())).fetchone()
+            item["last_count"] = dict(last) if last else None
+        result.append(item)
+    return result
 
 
 def get_summary(db):
@@ -400,7 +412,7 @@ def get_summary(db):
         "sale_amount": totals.get("SALE", {}).get("amount", 0),
         "issue_qty": totals.get("ISSUE", {}).get("qty", 0),
         "today_amount": sum(v["amount"] for v in totals.values()),
-        "low_stock": [i for i in items if i.get("item_type", "STOCK") == "STOCK" and i["stock"] <= i["min_stock"]],
+        "low_stock": [i for i in items if i["item_type"] == "STOCK" and i["stock_mode"] == "ledger" and i["stock"] <= i["min_stock"]],
         "item_count": len(items),
     }
 
@@ -452,7 +464,7 @@ def get_daily_sheet(db, start: str, end: str, partner_id=None):
     snapshots = {}
     for row in db.execute(
         """SELECT * FROM stock_snapshots WHERE report_date IN (?, ?, ?)
-        ORDER BY created_at, source""",
+        ORDER BY (source='count'), created_at, source""",
         (before_start, previous, end),
     ):
         snapshots[row["item_id"], row["report_date"]] = row
@@ -466,8 +478,8 @@ def get_daily_sheet(db, start: str, end: str, partner_id=None):
     }
     rows = []
     for item in db.execute(
-        """SELECT * FROM items WHERE active=1 OR archived_at IS NULL OR date(archived_at)>date(?)
-        ORDER BY id""", (start,),
+        """SELECT i.*,p.mode stock_mode FROM items i LEFT JOIN inventory_policy p ON p.item_id=i.id
+        WHERE active=1 OR archived_at IS NULL OR date(archived_at)>date(?) ORDER BY i.id""", (start,),
     ):
         item_id = item["id"]
         ledger = by_item.get(item_id)
@@ -477,12 +489,12 @@ def get_daily_sheet(db, start: str, end: str, partner_id=None):
         current_survey = snapshots.get((item_id, end))
         previous_survey = snapshots.get((item_id, previous))
         opening_survey = snapshots.get((item_id, before_start))
-        unknown = service or (not ledger and item_id in surveyed)
+        unknown = service or item["stock_mode"] == "snapshot" or (not ledger and item_id in surveyed)
         opening = None if unknown else (ledger["opening"] if ledger else 0)
         closing = None if unknown else (ledger["closing"] if ledger else 0)
         prior = None if unknown else (ledger["previous"] if ledger else 0)
         if not service and item_id in surveyed:
-            if not ledger or not ledger["opening_entries"]:
+            if item["stock_mode"] == "snapshot" or not ledger or not ledger["opening_entries"]:
                 opening = opening_survey["quantity"] if opening_survey else None
             if not ledger or not ledger["previous_entries"]:
                 prior = None
@@ -549,7 +561,8 @@ def get_monthly_summary(db: sqlite3.Connection, month: str):
     next_year, next_month = (year + 1, 1) if month_no == 12 else (year, month_no + 1)
     end = f"{next_year:04d}-{next_month:02d}-01"
     items = db.execute(
-        """SELECT * FROM items i WHERE i.active=1 OR EXISTS(
+        """SELECT i.*,p.mode stock_mode FROM items i LEFT JOIN inventory_policy p ON i.id=p.item_id
+        WHERE i.active=1 OR EXISTS(
         SELECT 1 FROM transactions t WHERE t.item_id=i.id AND t.transaction_date>=? AND t.transaction_date<?)
         ORDER BY i.id""",
         (start, end),
@@ -579,9 +592,17 @@ def get_monthly_summary(db: sqlite3.Connection, month: str):
             (item["id"], start, end),
         ).fetchone()
         closing = int(opening) + int(totals["purchase_qty"]) + int(totals["extra_in"]) - int(totals["sale_qty"]) - int(totals["issue_qty"]) - int(totals["extra_out"])
+        if item["stock_mode"] == "snapshot":
+            opening_day = (date.fromisoformat(start) - timedelta(days=1)).isoformat() if start > "0001-01-01" else ""
+            closing_day = f"{month}-{monthrange(year,month_no)[1]:02d}"
+            def snapshot_on(day):
+                row = db.execute("""SELECT quantity FROM stock_snapshots WHERE item_id=? AND report_date=?
+                    ORDER BY (source='count') DESC LIMIT 1""", (item["id"],day)).fetchone()
+                return row[0] if row else None
+            opening, closing = snapshot_on(opening_day), snapshot_on(closing_day)
         result.append({
             "item_id": item["id"], "item_name": item["name"], "unit": item["unit"],
-            "opening_stock": int(opening), "purchase_qty": int(totals["purchase_qty"]),
+            "opening_stock": opening, "purchase_qty": int(totals["purchase_qty"]),
             "sale_qty": int(totals["sale_qty"]), "issue_qty": int(totals["issue_qty"]),
             "adjustment": int(totals["extra_in"]) - int(totals["extra_out"]),
             "closing_stock": closing, "purchase_amount": int(totals["purchase_amount"]),
@@ -876,6 +897,9 @@ def import_inventory_rows(db: sqlite3.Connection, imported, reports=None, valida
     ).fetchone()[0]
     if manual_count:
         raise ValueError(f"가져올 날짜에 화면에서 입력한 거래가 {manual_count}건 있습니다. 중복 반영을 막기 위해 가져오기를 중단했습니다.")
+    for old in db.execute(f"""SELECT item_id,MIN(transaction_date) day FROM transactions
+        WHERE source='excel' AND transaction_date IN ({placeholders}) GROUP BY item_id""", dates).fetchall():
+        ops.ensure_open(db, old["item_id"], old["day"])
     db.execute(f"DELETE FROM transactions WHERE source='excel' AND transaction_date IN ({placeholders})", dates)
     db.execute(f"DELETE FROM daily_item_notes WHERE source='excel' AND report_date IN ({placeholders})", dates)
     db.execute(f"DELETE FROM stock_snapshots WHERE source='excel' AND report_date IN ({placeholders})", dates)
@@ -919,6 +943,7 @@ def import_inventory_rows(db: sqlite3.Connection, imported, reports=None, valida
         if not item_rows:
             continue
         first_date = item_rows[0]["date"]
+        ops.ensure_open(db, item_id, first_date)
         running = db.execute(
             """SELECT COALESCE(SUM(CASE WHEN transaction_type IN ('PURCHASE','RETURN_IN','ADJUST_IN')
             THEN quantity ELSE -quantity END),0) FROM transactions WHERE item_id=? AND transaction_date<?""",
@@ -1220,8 +1245,8 @@ class Handler(BaseHTTPRequestHandler):
                     items = get_items(db)
                     sales = db.execute("SELECT COALESCE(SUM(quantity*unit_price),0) FROM transactions WHERE transaction_type='SALE' AND transaction_date BETWEEN ? AND ?", (start.isoformat(), end.isoformat())).fetchone()[0]
                     businesses.append({**business, "sales_amount": sales, "item_count": len(items),
-                        "low_stock": [i for i in items if i.get("item_type", "STOCK") == "STOCK" and 0 < i["stock"] <= i["min_stock"]],
-                        "out_of_stock": [i for i in items if i.get("item_type", "STOCK") == "STOCK" and i["stock"] <= 0]})
+                        "low_stock": [i for i in items if i["item_type"] == "STOCK" and i["stock_mode"] == "ledger" and 0 < i["stock"] <= i["min_stock"]],
+                        "out_of_stock": [i for i in items if i["item_type"] == "STOCK" and i["stock_mode"] == "ledger" and i["stock"] <= 0]})
             return self.send_json({"from": start.isoformat(), "to": end.isoformat(), "businesses": businesses,
                 "sales_amount": sum(b["sales_amount"] for b in businesses),
                 "low_count": sum(len(b["low_stock"]) for b in businesses),
@@ -1256,10 +1281,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "품목을 찾을 수 없습니다."}, HTTPStatus.NOT_FOUND)
                 if db.execute(
                     """SELECT 1 FROM production_components WHERE finished_id=? OR item_id=? OR package_id=?
-                       UNION ALL SELECT 1 FROM transactions WHERE item_id=? AND source LIKE ?""",
-                    (item_id, item_id, item_id, item_id, SOURCE_PREFIX + "%"),
+                       UNION ALL SELECT 1 FROM work_logs WHERE item_id=?
+                       UNION ALL SELECT 1 FROM cafe_recipes WHERE item_id=? OR menu_id=?
+                       UNION ALL SELECT 1 FROM transactions WHERE item_id=? AND
+                         (source LIKE 'production:%' OR source LIKE 'cafe:%'
+                           OR EXISTS(SELECT 1 FROM transactions c WHERE c.source='cafe:' || transactions.id))""",
+                    (item_id,) * 7,
                 ).fetchone():
-                    raise ValueError("생산 구성이나 생산 기록에 연결된 품목입니다. 거래 기록을 보존하려면 품목을 사용중지해 주세요.")
+                    raise ValueError("생산 또는 카페 레시피 기록에 연결된 품목입니다. 품목을 사용중지해 주세요.")
                 backup = create_backup("before_hard_delete")
                 db.execute("DELETE FROM daily_item_notes WHERE item_id=?", (item_id,))
                 db.execute("DELETE FROM stock_snapshots WHERE item_id=?", (item_id,))
@@ -1296,6 +1325,33 @@ class Handler(BaseHTTPRequestHandler):
         size = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(size) or b"{}")
 
+    def operations_action(self, method, name, query, payload=None):
+        business = ACTIVE_BUSINESS.get()
+        if name in ("work", "capacity") and not BUSINESS_MAP[business]["production_enabled"]:
+            raise ValueError("이 사업단은 생산 기능이 꺼져 있습니다.")
+        if name in ("cafe", "waste") and business != "cafe":
+            raise ValueError("카페온리에서만 사용할 수 있습니다.")
+        if method == "GET":
+            params = {key: values[0] for key, values in query.items()}
+            month = params.get("month", date.today().strftime("%Y-%m"))
+            with database() as db:
+                readers = {"counts": lambda: ops.counts(db,params), "policy": lambda: ops.policy_rows(db),
+                    "work": lambda: ops.work_logs(db,month), "cafe": lambda: ops.cafe_data(db),
+                    "buying": lambda: ops.buying_report(db), "capacity": lambda: ops.capacity_report(db,month)}
+                if name in readers:
+                    return self.send_json(readers[name]())
+        else:
+            writers = {"counts":ops.change_counts, "policy":ops.save_policy, "work":ops.save_work,
+                "cafe":ops.save_cafe, "waste":ops.record_waste, "buying":ops.update_order}
+            if name in writers:
+                if not isinstance(payload, dict):
+                    raise ValueError("입력 내용을 확인해 주세요.")
+                with database() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    result = writers[name](db,payload)
+                return self.send_json(result)
+        return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
     def handle_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -1320,6 +1376,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(active_businesses())
             if path == "/api/welcome":
                 return self.send_json(get_welcome_settings())
+            if path.startswith("/api/operations/"):
+                return self.operations_action("GET",path.rsplit("/",1)[1],query)
             with database() as db:
                 if path == "/api/production":
                     if not BUSINESS_MAP[ACTIVE_BUSINESS.get()]["production_enabled"]:
@@ -1415,6 +1473,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             payload = self.read_json()
+            if path.startswith("/api/operations/"):
+                return self.operations_action("POST",path.rsplit("/",1)[1],{},payload)
             if path in ("/api/production/recipe", "/api/production/batch"):
                 if not BUSINESS_MAP[ACTIVE_BUSINESS.get()]["production_enabled"]:
                     raise ValueError("이 사업단은 생산 기능이 꺼져 있습니다.")
@@ -1426,7 +1486,7 @@ class Handler(BaseHTTPRequestHandler):
                         save_recipe(db, payload)
                         result = {"ok": True}
                     else:
-                        result = {"id": record_production(db, payload)}
+                        result = {"id": record_production(db, payload, check_open=lambda item_id, day: ops.ensure_open(db,item_id,day))}
                 return self.send_json(result)
             with database() as db:
                 if path == "/api/items":
@@ -1478,10 +1538,29 @@ class Handler(BaseHTTPRequestHandler):
                     item_type = db.execute("SELECT item_type FROM items WHERE id=? AND active=1", (item_id,)).fetchone()
                     if not item_type:
                         raise ValueError("사용 중인 품목을 찾을 수 없습니다.")
+                    day = payload.get("transaction_date") or date.today().isoformat()
+                    day = ops.day_value(day,allow_future=True).isoformat()
+                    cafe_sale = kind == "SALE" and ACTIVE_BUSINESS.get() == "cafe"
+                    partner = int(payload["partner_id"]) if payload.get("partner_id") else None
+                    price, note = int(payload.get("unit_price",0)), str(payload.get("note",""))
+                    source = "manual"
+                    if cafe_sale and "request_id" in payload:
+                        source = "manual-sale:" + ops.request_token(payload["request_id"])
+                        existing = db.execute("""SELECT transaction_date,item_id,partner_id,quantity,unit_price,note,id
+                            FROM transactions WHERE source=?""", (source,)).fetchone()
+                        if existing:
+                            if tuple(existing)[:-1] != (day,item_id,partner,qty,price,note):
+                                raise ValueError("이미 처리한 판매입니다. 장부에서 확인한 뒤 새 거래를 입력해 주세요.")
+                            db.commit()
+                            return self.send_json({"id":existing["id"]})
+                    ops.ensure_open(db,item_id,day)
+                    snapshot = db.execute("SELECT 1 FROM inventory_policy WHERE item_id=? AND mode='snapshot'", (item_id,)).fetchone()
+                    if snapshot and kind in ("ADJUST", "ADJUST_IN", "ADJUST_OUT"):
+                        raise ValueError("실사 기록형 품목은 재고 실사 화면에서 수량을 기록해 주세요.")
                     if kind in ("ADJUST", "ADJUST_IN", "ADJUST_OUT") and item_type[0] != "STOCK":
                         raise ValueError("재고품만 재고를 조정할 수 있습니다.")
                     if mode == "set":
-                        difference = qty - current_stock(db, item_id)
+                        difference = qty - ops.asof_stock(db, item_id, day)
                         if difference == 0:
                             db.commit()
                             return self.send_json({"unchanged": True})
@@ -1489,11 +1568,13 @@ class Handler(BaseHTTPRequestHandler):
                         qty = abs(difference)
                     elif mode:
                         kind = "ADJUST_IN" if mode == "increase" else "ADJUST_OUT"
-                    if mode != "set" and item_type[0] == "STOCK" and kind in ("SALE", "ISSUE", "RETURN_OUT", "ADJUST_OUT") and current_stock(db, item_id) < qty:
+                    if mode != "set" and not snapshot and item_type[0] == "STOCK" and kind in ("SALE", "ISSUE", "RETURN_OUT", "ADJUST_OUT") and current_stock(db, item_id) < qty:
                         raise ValueError("현재 재고보다 많은 수량을 출고할 수 없습니다.")
-                    cur = db.execute("INSERT INTO transactions(transaction_date, transaction_type, item_id, partner_id, quantity, unit_price, note) VALUES (?,?,?,?,?,?,?)", (payload.get("transaction_date") or date.today().isoformat(), kind, item_id, payload.get("partner_id") or None, qty, int(payload.get("unit_price", 0)), str(payload.get("note", ""))))
+                    cur = db.execute("""INSERT INTO transactions(transaction_date,transaction_type,item_id,partner_id,quantity,unit_price,note,source)
+                        VALUES (?,?,?,?,?,?,?,?)""", (day,kind,item_id,partner,qty,price,note,source))
+                    missing = ops.consume_cafe(db,cur.lastrowid,item_id,qty,day) if cafe_sale else []
                     db.commit()
-                    return self.send_json({"id": cur.lastrowid})
+                    return self.send_json({"id": cur.lastrowid, "low_materials": missing})
                 if path == "/api/import-workbook":
                     encoded = str(payload.get("data", ""))
                     if not encoded:
@@ -1543,6 +1624,13 @@ class Handler(BaseHTTPRequestHandler):
             if item_type == "SERVICE":
                 min_stock = 0
             with database() as db:
+                if item_type == "SERVICE" and db.execute("""SELECT 1 FROM inventory_policy WHERE item_id=?
+                    UNION ALL SELECT 1 FROM production_components WHERE finished_id=? OR item_id=? OR package_id=?
+                    UNION ALL SELECT 1 FROM work_logs WHERE item_id=?
+                    UNION ALL SELECT 1 FROM inventory_counts WHERE item_id=?
+                    UNION ALL SELECT 1 FROM cafe_recipes WHERE item_id=?
+                    UNION ALL SELECT 1 FROM incoming_orders WHERE item_id=? AND status='open'""", (item_id,)*8).fetchone():
+                    raise ValueError("실사, 생산, 레시피 또는 발주에 연결된 품목은 용역으로 바꿀 수 없습니다.")
                 duplicate = db.execute("SELECT id FROM items WHERE name=? AND unit=? AND id<>?", (name, unit, item_id)).fetchone()
                 if duplicate:
                     raise ValueError("같은 품목명과 단위가 이미 등록되어 있습니다.")
@@ -1559,6 +1647,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_DELETE(self):
         path = urlparse(self.path).path
         try:
+            self.read_json()
             with database() as db:
                 if path.startswith("/api/items/"):
                     item_id = int(path.rsplit("/", 1)[1])
@@ -1571,10 +1660,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"ok": True})
                 if path.startswith("/api/transactions/"):
                     tx_id = int(path.rsplit("/", 1)[1])
-                    row = db.execute("SELECT source FROM transactions WHERE id=?", (tx_id,)).fetchone()
-                    if row and row["source"].startswith(SOURCE_PREFIX):
-                        raise ValueError("생산에 연결된 재고 변동은 개별 삭제할 수 없습니다.")
+                    db.execute("BEGIN IMMEDIATE")
+                    row = db.execute("SELECT source,item_id,transaction_date FROM transactions WHERE id=?", (tx_id,)).fetchone()
+                    if not row:
+                        return self.send_json({"ok": True})
+                    if row["source"].startswith((SOURCE_PREFIX,ops.COUNT_SOURCE,ops.CAFE_SOURCE,"order:")):
+                        raise ValueError("생산·실사·레시피·발주에 연결된 재고 변동은 개별 삭제할 수 없습니다.")
+                    ops.ensure_open(db,row["item_id"],row["transaction_date"])
+                    for child in db.execute("SELECT item_id,transaction_date FROM transactions WHERE source=?", (f"{ops.CAFE_SOURCE}{tx_id}",)):
+                        ops.ensure_open(db,child["item_id"],child["transaction_date"])
+                    db.execute("DELETE FROM transactions WHERE source=?", (f"{ops.CAFE_SOURCE}{tx_id}",))
                     db.execute("DELETE FROM transactions WHERE id=?", (tx_id,))
+                    db.commit()
                     return self.send_json({"ok": True})
             return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except Exception as exc:

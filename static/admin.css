@@ -1,0 +1,44 @@
+/* Administrator surfaces use a neutral palette independent of the selected business. */
+body[data-admin=true] {
+  --bg:#202124; --card:#2b2d30; --ink:#f3f3f3; --muted:#c0c2c5;
+  --line:#505258; --teal:#e3e4e6; --teal-dark:#fff; --teal-soft:#3b3d42;
+  --red:#f1f1f1; --orange:#c4c6ca; --shadow:0 3px 16px #0002;
+  color-scheme:dark;
+}
+body[data-admin=true] .sidebar { background:#191a1c; color:#f3f3f3; }
+body[data-admin=true] .brand-mark { background:#e3e4e6; color:#202124; }
+body[data-admin=true] :is(.brand small,.sidebar-foot,.nav-item,.admin-link) { color:#c9cace; }
+body[data-admin=true] .nav-item:is(:hover,.active) { background:#383a3e; color:#fff; }
+body[data-admin=true] .status-dot { background:#d9dadc; }
+body[data-admin=true] :is(.card,.ledger-summary>div) { background:var(--card); border-color:var(--line); }
+body[data-admin=true] .admin-business-card { border-top-color:#777a80; }
+body[data-admin=true] :is(.subnav,.tab) { background:#2b2d30; color:#cfd0d3; border-color:#505258; }
+body[data-admin=true] .subnav .tab:is(.active,:hover) { background:#e3e4e6; color:#202124; }
+body[data-admin=true] .button.primary { background:#e3e4e6; color:#202124; box-shadow:none; }
+body[data-admin=true] .button.primary:hover { background:#fff; }
+body[data-admin=true] .button.ghost { background:#34363a; color:#f3f3f3; border-color:#696c72; }
+body[data-admin=true] .button.ghost:hover { background:#45474d; color:#fff; }
+body[data-admin=true] .button.danger { background:#34363a; color:#fff; border:1px solid #8b8e94; }
+body[data-admin=true] .button.danger.solid { background:#e3e4e6; color:#202124; }
+body[data-admin=true] .button.danger:hover { background:#505258; color:#fff; }
+body[data-admin=true] :is(.field input,.field select,.field textarea,.top-actions select,#template-business) {
+  background:#222326; color:#f3f3f3; border-color:#73767d;
+}
+body[data-admin=true] input::placeholder,body[data-admin=true] textarea::placeholder { color:#b5b7bd; opacity:1; }
+body[data-admin=true] :is(input,select,textarea):focus { outline:2px solid #e3e4e6; outline-offset:2px; box-shadow:none; }
+body[data-admin=true] :is(button,a):focus-visible { outline:2px solid #fff; outline-offset:3px; }
+body[data-admin=true] :is(input[type=checkbox],input[type=radio]) { accent-color:#d5d7dc; }
+body[data-admin=true] .data-table th { background:#242528; color:#d0d2d5; }
+body[data-admin=true] .data-table td { color:var(--ink); border-color:var(--line); }
+body[data-admin=true] .data-table tbody tr:hover { background:#35373b; }
+body[data-admin=true] :is(.danger-text,.kpi .hint) { color:var(--ink); }
+body[data-admin=true] .badge { background:#44464b; color:#fff; border:1px solid #66696f; }
+body[data-admin=true] :is(.reset-warning,.import-notice,.import-result) { background:#35373b; color:#f3f3f3; border-color:#696c72; }
+body[data-admin=true] :is(.edit-dialog,.print-dialog) { background:#2b2d30; color:#f3f3f3; }
+body[data-admin=true] .dialog-close { background:#424449; color:#fff; }
+body[data-admin=true] .toast { background:#ebedef; color:#202124; border:1px solid #777; }
+body[data-admin=true] .inactive-row { background:#252629; color:#c0c2c5; }
+body[data-admin=true] .template-preview { color-scheme:light; }
+body[data-admin=true] .template-preview :is(.card,.ledger-summary>div) { background:var(--card); color:var(--ink); border-color:var(--line); }
+body[data-admin=true] .template-preview .button.ghost { background:#fff; color:#263039; border-color:#b2bbc2; }
+body[data-admin=true] .template-preview .field input { background:#fff; color:#202124; border-color:#8b8e94; }

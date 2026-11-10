@@ -19,9 +19,16 @@ def stock_item(db, item_id):
     return dict(item)
 
 
+def tracked_stock_item(db, item_id):
+    item = stock_item(db, item_id)
+    if db.execute("SELECT 1 FROM inventory_policy WHERE item_id=? AND mode='snapshot'", (item_id,)).fetchone():
+        raise ValueError(f"{item['name']}은(는) 장부 추적 품목이어야 합니다.")
+    return item
+
+
 def save_recipe(db, payload):
     finished_id = positive_int(payload.get("finished_id"), "완성품")
-    stock_item(db, finished_id)
+    tracked_stock_item(db, finished_id)
     components = payload.get("components")
     if not isinstance(components, list) or not 1 <= len(components) <= 100:
         raise ValueError("재료를 1개 이상 선택해 주세요. 최대 100개입니다.")
@@ -32,14 +39,14 @@ def save_recipe(db, payload):
         item_id = positive_int(component.get("item_id"), "재료")
         if item_id == finished_id or item_id in materials:
             raise ValueError("완성품을 재료로 넣거나 같은 재료를 중복 등록할 수 없습니다.")
-        stock_item(db, item_id)
+        tracked_stock_item(db, item_id)
         materials.add(item_id)
         quantity = positive_int(component.get("quantity"), "완성품 1개당 재료 수량")
         package_id = component.get("package_id")
         package_size = None
         if package_id is not None:
             package_id = positive_int(package_id, "포장 품목")
-            stock_item(db, package_id)
+            tracked_stock_item(db, package_id)
             if package_id == finished_id or package_id in packages:
                 raise ValueError("완성품을 포장 품목으로 쓰거나 같은 포장 품목을 중복 등록할 수 없습니다.")
             packages.add(package_id)
@@ -89,33 +96,39 @@ def available_stock(db, item_id, today):
     return row[0]
 
 
-def record_production(db, payload):
+def record_production(db, payload, *, work_date=None, recipe=None, usage=None, check_open):
     finished_id = positive_int(payload.get("finished_id"), "완성품")
-    quantity = positive_int(payload.get("quantity"), "생산 수량")
+    quantity = payload["quantity"] if work_date is not None else positive_int(payload.get("quantity"), "생산 수량")
     batch_id = payload.get("request_id")
     if not isinstance(batch_id, str) or not re.fullmatch(r"[a-f0-9]{32}", batch_id):
         raise ValueError("생산 요청이 올바르지 않습니다. 화면을 새로고침해 주세요.")
     note = str(payload.get("note", "")).strip()
     if len(note) > 300:
         raise ValueError("비고는 300자까지 입력할 수 있습니다.")
-    db.execute("BEGIN IMMEDIATE")
+    if not db.in_transaction:
+        db.execute("BEGIN IMMEDIATE")
     existing = db.execute("SELECT * FROM production_batches WHERE id=?", (batch_id,)).fetchone()
     if existing:
         if (finished_id, quantity, note) != (existing["finished_id"], existing["quantity"], json.loads(existing["details"])["note"]):
             raise ValueError("이미 처리한 생산 요청입니다. 새로 입력해 주세요.")
         return batch_id
-    finished = stock_item(db, finished_id)
-    components = db.execute("SELECT * FROM production_components WHERE finished_id=? ORDER BY item_id", (finished_id,)).fetchall()
+    finished = tracked_stock_item(db, finished_id)
+    components = recipe if recipe is not None else db.execute(
+        "SELECT * FROM production_components WHERE finished_id=? ORDER BY item_id", (finished_id,)
+    ).fetchall()
     if not components:
         raise ValueError("완성품 1개에 필요한 재료를 먼저 등록해 주세요.")
-    today = date.today().isoformat()
+    day = work_date or date.today().isoformat()
+    overrides = usage or {}
     movements = []
     for component in components:
-        item = stock_item(db, component["item_id"])
-        needed = component["quantity"] * quantity
-        loose = available_stock(db, item["id"], today)
-        package = stock_item(db, component["package_id"]) if component["package_id"] is not None else None
-        packed = available_stock(db, package["id"], today) if package else 0
+        needed = overrides.get(str(component["item_id"]), component["quantity"] * quantity)
+        if not needed:
+            continue
+        item = tracked_stock_item(db, component["item_id"])
+        loose = available_stock(db, item["id"], day)
+        package = tracked_stock_item(db, component["package_id"]) if component["package_id"] is not None else None
+        packed = available_stock(db, package["id"], day) if package else 0
         pack_size = component["package_size"] or 0
         if loose < 0 or packed < 0:
             raise ValueError(f"{item['name']}의 낱개 또는 포장 재고가 음수입니다. 재고를 확인해 주세요.")
@@ -127,16 +140,20 @@ def record_production(db, payload):
             movements.append({**package, "delta": -opened, "action": "포장 개봉"})
             movements.append({**item, "delta": opened * pack_size, "action": "개봉 낱개 입고"})
         movements.append({**item, "delta": -needed, "action": "생산 재료 사용"})
-    movements.append({**finished, "delta": quantity, "action": "완성품 입고"})
+    if quantity:
+        movements.append({**finished, "delta": quantity, "action": "완성품 입고"})
+    for move in movements:
+        check_open(move["id"], day)
     details = {"finished": finished, "movements": movements, "note": note}
-    db.execute(
-        "INSERT INTO production_batches(id,produced_date,finished_id,quantity,details) VALUES (?,?,?,?,?)",
-        (batch_id, today, finished_id, quantity, json.dumps(details, ensure_ascii=False)),
-    )
+    if quantity:
+        db.execute(
+            "INSERT INTO production_batches(id,produced_date,finished_id,quantity,details) VALUES (?,?,?,?,?)",
+            (batch_id, day, finished_id, quantity, json.dumps(details, ensure_ascii=False)),
+        )
     db.executemany(
         """INSERT INTO transactions(transaction_date,transaction_type,item_id,quantity,unit_price,note,source)
            VALUES (?,?,?,?,0,?,?)""",
-        [(today, "ADJUST_IN" if move["delta"]>0 else "ADJUST_OUT", move["id"], abs(move["delta"]),
+        [(day, "ADJUST_IN" if move["delta"]>0 else "ADJUST_OUT", move["id"], abs(move["delta"]),
           f"{finished['name']} · {move['action']}", SOURCE_PREFIX + batch_id) for move in movements],
     )
     return batch_id
