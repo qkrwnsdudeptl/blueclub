@@ -10,6 +10,8 @@ __pycache__/
 /active_notice.json
 /business_catalog.json
 /business_catalog.tmp
+/interface_copy.json
+/interface_copy.tmp
 /server.local.json
 /admin.local
 /.env*

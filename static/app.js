@@ -6,7 +6,7 @@ const qty = (n) => Number(n||0).toLocaleString('ko-KR');
 const stockDisplay = (n) => n === null || n === undefined ? '미조사' : qty(n);
 const today = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2200)}
-async function api(url, options={}){const headers={'Content-Type':'application/json','X-Business-ID':state.businessId,...(options.headers||{})};const res=await fetch(url,{...options,headers});const data=await res.json();if(!res.ok)throw new Error(data.error||'요청을 처리하지 못했습니다.');return data}
+async function api(url, options={}){if(interfaceCopy.preview && !['GET','HEAD'].includes((options.method||'GET').toUpperCase()))throw new Error('미리보기에서는 자료를 저장하거나 삭제할 수 없습니다.');const headers={'Content-Type':'application/json','X-Business-ID':state.businessId,...(options.headers||{})};const res=await fetch(url,{...options,headers});const data=await res.json();if(!res.ok)throw new Error(data.error||'요청을 처리하지 못했습니다.');return data}
 async function refresh(renderView=true){[state.summary,state.items,state.partners,state.transactions]=await Promise.all([api('/api/summary'),api('/api/items'),api('/api/partners'),api('/api/transactions')]);applyBusinessTheme();if(renderView)render();}
 
 const rememberedBusinessKey = 'inventoryRememberedBusiness';
@@ -15,6 +15,12 @@ const isBusiness = id => state.businesses.some(b => b.id === id);
 async function initialize() {
   try {
     state.businesses = await api('/api/businesses');
+    await interfaceCopy.load();
+    if (interfaceCopy.preview) {
+      await enterBusiness(isBusiness(interfaceCopy.preview) ? interfaceCopy.preview : state.businesses[0].id, 'dashboard');
+      interfaceCopy.ready();
+      return;
+    }
     const navigation = performance.getEntriesByType('navigation')[0];
     const current = navigation?.type === 'reload' ? history.state?.inventoryBusiness : null;
     const remembered = localStorage.getItem(rememberedBusinessKey);
@@ -102,7 +108,8 @@ function setView(view) {
   if (view === 'production' && !productionEnabled()) view = 'ledger';
   if ((view==='work' && !productionEnabled()) || (view==='cafe' && state.businessId!=='cafe')) view = 'counts';
   state.view = view;
-  localStorage.setItem('inventoryView',view);
+  if (interfaceCopy.preview && view==='admin') return;
+  if (!interfaceCopy.preview) localStorage.setItem('inventoryView',view);
   const report = ['daily','monthly','calendar'].includes(view);
   const manage = ['items','partners','import'].includes(view);
   const operations = Object.hasOwn(operationTitles,view);
@@ -207,11 +214,11 @@ function renderDashboard() {
   ];
   $('#view-dashboard').innerHTML = `
     <section class="workspace-hero"><div><p class="eyebrow">오늘의 업무</p>
-      <h2>${escapeHtml(business?.name||'사업단')}의 하루를 한눈에.</h2>
+      <h2 data-copy-template="{business}의 하루를 한눈에." data-copy-vars="${escapeHtml(JSON.stringify({business:business?.name||'사업단'}))}">${escapeHtml(business?.name||'사업단')}의 하루를 한눈에.</h2>
       <p>거래를 기록하고, 필요한 재고를 확인하세요.</p></div>
       <button class="button primary" onclick="openTransactionDialog()">＋ 거래 입력</button></section>
     <div class="workspace-actions">${actions.map(a=>`<button type="button" class="workspace-action" onclick="${a.action}">
-      <span class="action-icon" aria-hidden="true">${a.icon}</span><span><strong>${a.label}</strong><small>${a.detail}</small></span>
+      <span class="action-icon" aria-hidden="true">${a.icon}</span><span><strong>${a.label}</strong><small ${a.action==='openTodayCounts()' ? `data-copy-template="매일 확인 품목 {count}개" data-copy-vars='${JSON.stringify({count:dailyItems})}'` : ''}>${a.detail}</small></span>
       <span class="action-arrow" aria-hidden="true">↗</span></button>`).join('')}</div>
     <div class="workspace-section-title"><h2>사업단 현황</h2><span>${today()} 기준</span></div>
     <div class="home-grid">${blocks.join('')||'<p>관리자에서 표시할 홈 항목을 설정할 수 있습니다.</p>'}</div>`;
@@ -837,13 +844,15 @@ async function renderAdmin(){
       <button class="tab" data-admin-tab="data">데이터 관리</button>
       <button class="tab" data-admin-tab="notice">전체 팝업 발송</button>
       <button class="tab" data-admin-tab="welcome">환영 페이지</button>
+      <button class="tab" data-admin-tab="copy">화면 문구 편집</button>
     </nav>`;
-    const panels = {overview, businesses:document.createElement('section'), data:document.createElement('section'), notice:document.createElement('section'), welcome:document.createElement('section')};
+    const panels = {overview, businesses:document.createElement('section'), data:document.createElement('section'), notice:document.createElement('section'), welcome:document.createElement('section'), copy:document.createElement('section')};
     target.append(...Object.values(panels));
     addWelcomeSettings(panels.welcome, welcomeSettings);
     addBusinessSettings(panels.businesses, businesses);
     addAdminData(panels.data);
     addNoticeSettings(panels.notice);
+    interfaceCopy.editor(panels.copy);
     const tabs = target.querySelectorAll('[data-admin-tab]');
     function selectTab(key) {
       adminTab = key;

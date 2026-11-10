@@ -40,6 +40,13 @@ BUSINESSES = [
     {"id": "dumpling", "name": "엄마손만두", "theme": "plum"},
 ]
 CATALOG_PATH = ROOT / "business_catalog.json"
+COPY_PATH = ROOT / "interface_copy.json"
+
+
+def interface_copy():
+    if COPY_PATH.exists():
+        return json.loads(COPY_PATH.read_text(encoding="utf-8"))
+    return {"revision": 0, "scopes": {}}
 HOME_WIDGETS = ("items", "purchase", "sale", "amount", "stock", "recent")
 THEMES = ("teal", "coffee", "blue", "rose", "amber", "plum", "ink", "clear", "salt", "gothic", "stone")
 BUSINESS_MAP = {
@@ -1004,7 +1011,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "JSON 요청만 허용됩니다."}, HTTPStatus.BAD_REQUEST)
         business_id = self.headers.get("X-Business-ID")
         # Old pages must not accidentally mutate the original business.
-        global_paths = ("/api/businesses", "/api/welcome", "/api/admin/login", "/api/admin/notice")
+        global_paths = ("/api/interface-copy", "/api/admin/interface-copy", "/api/businesses", "/api/welcome", "/api/admin/login", "/api/admin/notice")
         if path.startswith("/api/") and business_id not in BUSINESS_MAP and path not in global_paths:
             self.close_connection = True
             return self.send_json({"error": "사업단을 선택한 뒤 새로고침하세요."}, HTTPStatus.BAD_REQUEST)
@@ -1106,6 +1113,32 @@ class Handler(BaseHTTPRequestHandler):
         if not token:
             self.close_connection = True
             return self.send_json({"error": "관리자 코드 인증이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+        if path == "/api/admin/interface-copy":
+            settings = interface_copy()
+            if method == "GET":
+                return self.send_json(settings)
+            if method == "PUT":
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 500000:
+                    raise ValueError("문구 설정 용량을 초과했습니다.")
+                payload = self.read_json()
+                if payload.get("revision") != settings["revision"]:
+                    return self.send_json({"error": "다른 곳에서 설정을 변경했습니다. 편집기를 다시 열어 주세요."}, HTTPStatus.CONFLICT)
+                scope, texts = payload.get("scope"), payload.get("texts")
+                if scope != "all" and scope not in BUSINESS_MAP:
+                    raise ValueError("사업단을 확인하세요.")
+                if not isinstance(texts, dict) or len(texts) > 2000:
+                    raise ValueError("문구 목록을 확인하세요.")
+                for key, value in texts.items():
+                    if not isinstance(key, str) or not isinstance(value, str) or not 0 < len(key) <= 500 or len(value) > 2000:
+                        raise ValueError("문구는 2,000자 이내로 입력하세요.")
+                    if set(re.findall(r"\{[a-zA-Z_]+\}", key)) != set(re.findall(r"\{[a-zA-Z_]+\}", value)):
+                        raise ValueError("{business}, {count} 같은 자동 표시 항목을 유지하세요.")
+                settings["scopes"][scope] = texts
+                settings["revision"] += 1
+                temporary = COPY_PATH.with_suffix(".tmp")
+                temporary.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(COPY_PATH)
+                return self.send_json(settings)
         if path == "/api/admin/notice":
             if method == "GET":
                 return self.send_json({"persistent": persistent_notices, "temporary": temporary_notice})
@@ -1372,6 +1405,8 @@ class Handler(BaseHTTPRequestHandler):
                     }.get(file.suffix, "application/octet-stream")
                     return self.send_text(file.read_bytes(), content_type)
                 return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            if path == "/api/interface-copy":
+                return self.send_json(interface_copy())
             if path == "/api/businesses":
                 return self.send_json(active_businesses())
             if path == "/api/welcome":

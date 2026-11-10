@@ -42,3 +42,27 @@ body[data-admin=true] .template-preview { color-scheme:light; }
 body[data-admin=true] .template-preview :is(.card,.ledger-summary>div) { background:var(--card); color:var(--ink); border-color:var(--line); }
 body[data-admin=true] .template-preview .button.ghost { background:#fff; color:#263039; border-color:#b2bbc2; }
 body[data-admin=true] .template-preview .field input { background:#fff; color:#202124; border-color:#8b8e94; }
+
+/* Light mode uses the same neutral hierarchy with dark text on pale surfaces. */
+body[data-admin=true][data-admin-theme=light] { --bg:#f3f4f5; --card:#fff; --ink:#202124; --muted:#565a60; --line:#d0d3d7; --teal:#303236; --teal-dark:#151618; --teal-soft:#e9eaec; --red:#303236; --orange:#565a60; --shadow:0 3px 16px #0000000a; color-scheme:light; }
+body[data-admin=true][data-admin-theme=light] .sidebar {background:#eceef0;color:#202124}
+body[data-admin=true][data-admin-theme=light] :is(.brand small,.sidebar-foot,.nav-item,.admin-link){color:#45494f}
+body[data-admin=true][data-admin-theme=light] .brand-mark{background:#303236;color:#fff}
+body[data-admin=true][data-admin-theme=light] .nav-item:is(:hover,.active){background:#d6d9de;color:#17181a}
+body[data-admin=true][data-admin-theme=light] :is(.subnav,.tab){background:#fff;color:#45494f;border-color:#d0d3d7}
+body[data-admin=true][data-admin-theme=light] .subnav .tab:is(.active,:hover),body[data-admin=true][data-admin-theme=light] .button.primary,body[data-admin=true][data-admin-theme=light] .button.danger.solid{background:#303236;color:#fff}
+body[data-admin=true][data-admin-theme=light] .button.primary:hover{background:#17181a}
+body[data-admin=true][data-admin-theme=light] :is(.button.ghost,.button.danger){background:#f2f3f4;color:#242629;border-color:#9da1a7}
+body[data-admin=true][data-admin-theme=light] :is(.button.ghost,.button.danger):hover{background:#e0e2e5;color:#17181a}
+body[data-admin=true][data-admin-theme=light] :is(.field input,.field select,.field textarea,.top-actions select,#template-business,.copy-controls select){background:#fff;color:#202124;border-color:#92979e}
+body[data-admin=true][data-admin-theme=light] :is(input,textarea)::placeholder{color:#656a72}
+body[data-admin=true][data-admin-theme=light] :is(input,select,textarea):focus,body[data-admin=true][data-admin-theme=light] :is(button,a):focus-visible{outline-color:#303236}
+body[data-admin=true][data-admin-theme=light] :is(input[type=checkbox],input[type=radio]){accent-color:#303236}
+body[data-admin=true][data-admin-theme=light] .data-table th{background:#f0f1f3;color:#45494f}
+body[data-admin=true][data-admin-theme=light] .data-table tbody tr:hover{background:#f3f4f5}
+body[data-admin=true][data-admin-theme=light] .badge{background:#e8eaed;color:#303236;border-color:#b7bcc3}
+body[data-admin=true][data-admin-theme=light] :is(.reset-warning,.import-notice,.import-result,.inactive-row){background:#f0f1f3;color:#303236;border-color:#b7bcc3}
+body[data-admin=true][data-admin-theme=light] :is(.edit-dialog,.print-dialog){background:#fff;color:#202124}
+body[data-admin=true][data-admin-theme=light] .dialog-close{background:#e8eaed;color:#303236}
+body[data-admin=true][data-admin-theme=light] .toast{background:#303236;color:#fff}
+body[data-admin=true] .copy-controls select{background:var(--card);color:var(--ink);border:1px solid var(--line)}

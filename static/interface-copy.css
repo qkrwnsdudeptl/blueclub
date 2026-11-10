@@ -1,0 +1,18 @@
+.admin-theme-control { display:none; align-items:center; gap:8px; font-size:13px; }
+body[data-admin=true] .admin-theme-control { display:flex; }
+.copy-controls { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
+.copy-controls label { display:flex; gap:8px; align-items:center; }
+.copy-controls select { padding:10px; border-radius:8px; }
+.copy-layout { display:grid; grid-template-columns:280px minmax(0,1fr); gap:16px; margin-top:16px; }
+.copy-layout iframe { width:100%; height:780px; border:1px solid var(--line); background:white; border-radius:12px; }
+.copy-tools .field { margin-bottom:16px; }
+.copy-help { font-size:12px; color:var(--muted); line-height:1.7; }
+#copy-list { max-height:340px; overflow:auto; }
+.copy-list-item { display:block; width:100%; text-align:left; padding:10px; background:var(--card); color:var(--ink); border:0; border-bottom:1px solid var(--line); cursor:pointer; overflow-wrap:anywhere; }
+.copy-list-item:hover { background:var(--teal-soft); }
+#copy-status { font-size:13px; }
+.copy-selecting :is(h1,h2,h3,p,small,strong,label,button,th,span):hover { outline:1px dashed #677caa; cursor:text; }
+@media(max-width:1000px){.copy-layout{grid-template-columns:1fr}.copy-layout iframe{height:700px}}
+@media print{.admin-theme-control,.copy-editor{display:none!important}}
+
+.admin-theme-control .theme-toggle {font-size:26px;line-height:1;width:44px;height:44px;padding:6px;border-radius:50%;}
