@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>erp비스무리 | 로컬 재고관리</title>
+  <link rel="preload" href="/static/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=11" />
+</head>
+<body>
+  <main id="welcome-page" class="welcome-page" aria-labelledby="welcome-title" hidden>
+    <section class="card welcome-card">
+      <p class="eyebrow">erp비스무리</p>
+      <h1 id="welcome-title" tabindex="-1">erp비스무리에 오신 것을 환영합니다</h1>
+      <p id="welcome-message">접속할 사업단을 선택해 주세요.</p>
+      <form id="welcome-form">
+        <div class="field">
+          <label for="welcome-business">사업단</label>
+          <select id="welcome-business" name="business" required></select>
+        </div>
+        <label class="welcome-remember"><input type="checkbox" name="remember"> 다음에도 해당 사업단으로 접속</label>
+        <button type="submit" class="button primary" disabled>접속하기</button>
+        <p id="welcome-error" role="status"></p>
+      </form>
+    </section>
+  </main>
+  <div class="app-shell" id="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">E</span><div><strong>erp비스무리</strong><small>LOCAL INVENTORY</small></div></div>
+      <nav>
+        <button class="nav-item active" data-view="dashboard"><span>▦</span> 홈</button>
+        <button class="nav-item" data-view="ledger"><span>☷</span> 거래</button>
+        <button class="nav-item" data-view="daily"><span>▤</span> 보고서</button>
+        <button class="nav-item" data-view="items"><span>□</span> 관리</button>
+      </nav>
+      <div class="sidebar-foot"><span class="status-dot"></span> 이 컴퓨터에 안전하게 저장 중<br><small>SQLite · NAS 미사용</small><button type="button" class="admin-link" data-view="admin">관리자</button></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><p class="eyebrow">LOCAL WORKSPACE</p><h1 id="page-title">대시보드</h1></div><div class="top-actions"><select id="business-switcher" aria-label="사업단 선택"></select><span id="today-label"></span></div></header>
+      <nav id="report-tabs" class="subnav print-hide" aria-label="보고서" hidden>
+        <button class="tab" data-view="daily">일일 운영일지</button><button class="tab" data-view="monthly">월간 거래요약</button><button class="tab" data-view="calendar">달력 대장</button>
+      </nav>
+      <nav id="manage-tabs" class="subnav print-hide" aria-label="관리" hidden>
+        <button class="tab" data-view="items">품목 관리</button><button class="tab" data-view="partners">기관·거래처</button><button class="tab" data-view="import">엑셀 가져오기</button>
+      </nav>
+      <section id="view-dashboard" class="view active"></section>
+      <section id="view-entry" class="view"></section>
+      <section id="view-daily" class="view"></section>
+      <section id="view-monthly" class="view"></section>
+      <section id="view-calendar" class="view"></section>
+      <section id="view-ledger" class="view"></section>
+      <section id="view-production" class="view"></section>
+      <section id="view-items" class="view"></section>
+      <section id="view-partners" class="view"></section>
+      <section id="view-import" class="view"></section>
+      <section id="view-admin" class="view"></section>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <dialog id="transaction-dialog" class="edit-dialog" aria-label="거래 입력"></dialog>
+  <dialog id="zero-price-dialog" class="edit-dialog" aria-labelledby="zero-price-title">
+    <div class="edit-dialog-head"><h2 id="zero-price-title">단가를 0원으로 하시겠습니까?</h2></div>
+    <form method="dialog">
+      <div class="form-actions">
+        <button class="button ghost" value="cancel">취소</button>
+        <button class="button primary" value="save" autofocus>0원으로 저장</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="notice-dialog" class="edit-dialog" aria-labelledby="notice-title">
+    <div class="edit-dialog-head"><h2 id="notice-title"></h2><button type="button" class="dialog-close" aria-label="공지 닫기">×</button></div>
+    <div class="card-body"><p id="notice-message"></p>
+      <label id="notice-hide-option"><input type="checkbox" id="notice-hide"> 다시 보지 않음</label>
+      <div class="form-actions"><button type="button" class="button primary" id="notice-confirm">확인</button></div>
+    </div>
+  </dialog>
+  <script src="/static/production.js?v=1"></script>
+  <script src="/static/app.js?v=16"></script>
+</body>
+</html>

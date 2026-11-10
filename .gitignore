@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.db
+*.db-*
+*.sqlite*
+/backups/
+/business_data/
+/logs/
+/active_notice.json
+/business_catalog.json
+/business_catalog.tmp
+/server.local.json
+/admin.local
+/.env*
+/InventoryServer.exe
+/Green_Pocketing_Detector/
