@@ -66,3 +66,6 @@ body[data-admin=true][data-admin-theme=light] :is(.edit-dialog,.print-dialog){ba
 body[data-admin=true][data-admin-theme=light] .dialog-close{background:#e8eaed;color:#303236}
 body[data-admin=true][data-admin-theme=light] .toast{background:#303236;color:#fff}
 body[data-admin=true] .copy-controls select{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+
+.template-home-intro { padding:12px 6px 0; color:var(--ink); }
+body[data-admin=true] .template-home-intro .button.primary { background:var(--teal); color:#fff; }

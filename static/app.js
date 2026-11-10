@@ -204,15 +204,20 @@ function renderDashboard() {
   const blocks = Object.entries(homeWidgets(state.summary,state.items,state.transactions))
     .filter(([key])=>business?.widgets?.[key]!==false)
     .map(([key, html])=>`<div class="${['stock','recent'].includes(key)?'home-wide':''}">${html}</div>`);
-  const dailyItems = state.items.filter(i=>i.item_type==='STOCK' && i.count_frequency==='daily').length;
+  $('#view-dashboard').innerHTML = `${homeIntro(business, state.items)}
+    <div class="home-grid">${blocks.join('')||'<p>관리자에서 표시할 홈 항목을 설정할 수 있습니다.</p>'}</div>`;
+}
+
+function homeIntro(business, items) {
+  const dailyItems = items.filter(i=>i.item_type==='STOCK' && i.count_frequency==='daily').length;
   const actions = [
     {label:'거래 기록',detail:'매입·판매·재고 조정',action:"openTransactionDialog()",icon:'↗'},
     {label:'오늘 실사',detail:`매일 확인 품목 ${dailyItems}개`,action:"openTodayCounts()",icon:'✓'},
-    ...(productionEnabled() ? [{label:'작업일지',detail:'작업 실적과 생산 재고',action:"setView('work')",icon:'▥'}] :
-      state.businessId==='cafe' ? [{label:'카페 레시피',detail:'판매 메뉴와 재료 연결',action:"setView('cafe')",icon:'◈'}] : []),
+    ...(business?.production_enabled ? [{label:'작업일지',detail:'작업 실적과 생산 재고',action:"setView('work')",icon:'▥'}] :
+      business?.id==='cafe' ? [{label:'카페 레시피',detail:'판매 메뉴와 재료 연결',action:"setView('cafe')",icon:'◈'}] : []),
     {label:'발주 확인',detail:'입고 예정과 부족 예상',action:"setView('planning')",icon:'→'},
   ];
-  $('#view-dashboard').innerHTML = `
+  return `
     <section class="workspace-hero"><div><p class="eyebrow">오늘의 업무</p>
       <h2 data-copy-template="{business}의 하루를 한눈에." data-copy-vars="${escapeHtml(JSON.stringify({business:business?.name||'사업단'}))}">${escapeHtml(business?.name||'사업단')}의 하루를 한눈에.</h2>
       <p>거래를 기록하고, 필요한 재고를 확인하세요.</p></div>
@@ -220,8 +225,7 @@ function renderDashboard() {
     <div class="workspace-actions">${actions.map(a=>`<button type="button" class="workspace-action" onclick="${a.action}">
       <span class="action-icon" aria-hidden="true">${a.icon}</span><span><strong>${a.label}</strong><small ${a.action==='openTodayCounts()' ? `data-copy-template="매일 확인 품목 {count}개" data-copy-vars='${JSON.stringify({count:dailyItems})}'` : ''}>${a.detail}</small></span>
       <span class="action-arrow" aria-hidden="true">↗</span></button>`).join('')}</div>
-    <div class="workspace-section-title"><h2>사업단 현황</h2><span>${today()} 기준</span></div>
-    <div class="home-grid">${blocks.join('')||'<p>관리자에서 표시할 홈 항목을 설정할 수 있습니다.</p>'}</div>`;
+    <div class="workspace-section-title"><h2>사업단 현황</h2><span>${today()} 기준</span></div>`;
 }
 
 function openTodayCounts(){
@@ -729,12 +733,15 @@ function addBusinessSettings(target, businesses) {
     const widgets = homeWidgets(previewData.summary, previewData.items, previewData.transactions);
     preview.dataset.theme = form.elements.theme.value;
     preview.innerHTML = `<header class="template-banner"><strong id="template-preview-name"></strong><small>홈 미리보기</small></header>
+      <div class="template-home-intro" inert>${homeIntro({...draft, name:form.elements.name.value || '새 사업단',
+        production_enabled:form.elements.production_enabled.checked}, previewData.items)}</div>
       <div class="home-grid">${Object.entries(widgets).map(([key, html])=>`
         <div class="template-widget ${['stock','recent'].includes(key)?'home-wide':''}">
           <label><input type="checkbox" data-widget="${key}" ${draft.widgets[key]?'checked':''}> ${homeWidgetLabels[key]} 표시</label>
           <div class="template-widget-content" inert ${draft.widgets[key]?'':'hidden'}>${html}</div>
         </div>`).join('')}</div>`;
     preview.querySelector('#template-preview-name').textContent = form.elements.name.value || '새 사업단';
+    interfaceCopy.applyPreview(preview, draft.id);
   }
 
   async function select(id) {
@@ -771,6 +778,7 @@ function addBusinessSettings(target, businesses) {
   });
   form.elements.name.addEventListener('input', ()=>{
     preview.querySelector('#template-preview-name').textContent = form.elements.name.value || '새 사업단';
+    interfaceCopy.applyPreview(preview, draft.id);
   });
   form.elements.theme.addEventListener('change', ()=>{preview.dataset.theme=form.elements.theme.value});
   preview.addEventListener('change', event=>{
@@ -852,13 +860,17 @@ async function renderAdmin(){
     addBusinessSettings(panels.businesses, businesses);
     addAdminData(panels.data);
     addNoticeSettings(panels.notice);
-    interfaceCopy.editor(panels.copy);
+    let copyEditorOpened = false;
     const tabs = target.querySelectorAll('[data-admin-tab]');
     function selectTab(key) {
       adminTab = key;
       Object.entries(panels).forEach(([name,panel])=>{panel.hidden=name!==key});
       tabs.forEach(tab=>tab.classList.toggle('active',tab.dataset.adminTab===key));
       if (key==='notice') refreshNoticeAdmin?.();
+      if (key==='copy' && !copyEditorOpened) {
+        copyEditorOpened = true;
+        interfaceCopy.editor(panels.copy);
+      }
     }
     tabs.forEach(tab=>tab.onclick=()=>selectTab(tab.dataset.adminTab));
     selectTab(adminTab);
@@ -1250,13 +1262,15 @@ noticeDialog.addEventListener('cancel', event=>{event.preventDefault();closeNoti
 window.addEventListener('storage', event=>{
   if (event.key?.startsWith(dismissedNoticeKey)) showNextNotice();
 });
-const noticeStream = new EventSource('/api/notice/events?v=2');
-noticeStream.onmessage = event=>{
-  const update = JSON.parse(event.data);
-  activePersistent = update.persistent;
-  if (Object.hasOwn(update,'temporary')) activeTemporary = update.temporary;
-  const visibleIds = new Set([activeTemporary, ...activePersistent].filter(Boolean).map(notice=>notice.id));
-  for (const id of closedNoticeIds) if (!visibleIds.has(id)) closedNoticeIds.delete(id);
-  showNextNotice();
-  if (adminTab==='notice') refreshNoticeAdmin?.();
-};
+if (!interfaceCopy.preview) {
+  const noticeStream = new EventSource('/api/notice/events?v=2');
+  noticeStream.onmessage = event=>{
+    const update = JSON.parse(event.data);
+    activePersistent = update.persistent;
+    if (Object.hasOwn(update,'temporary')) activeTemporary = update.temporary;
+    const visibleIds = new Set([activeTemporary, ...activePersistent].filter(Boolean).map(notice=>notice.id));
+    for (const id of closedNoticeIds) if (!visibleIds.has(id)) closedNoticeIds.delete(id);
+    showNextNotice();
+    if (adminTab==='notice') refreshNoticeAdmin?.();
+  };
+}

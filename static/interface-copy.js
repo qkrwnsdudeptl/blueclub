@@ -5,27 +5,30 @@ const interfaceCopy = (() => {
   const records = new WeakMap();
   let entries = [], scheduled = false;
   const pageTitle = document.title;
-  const excluded = 'script,style,textarea,code,pre,[contenteditable],.copy-editor,.template-preview,#notice-title,#notice-message,#welcome-title,#welcome-message,#welcome-error,#today-label,.stock-row,.stock-sub,.kpi .value,.ledger-summary strong';
+  const excluded = 'script,style,textarea,code,pre,[contenteditable],.copy-editor,#notice-title,#notice-message,#welcome-title,#welcome-message,#welcome-error,#today-label,.stock-row,.stock-sub,.kpi .value,.ledger-summary strong';
   function scopeTexts() {
     if (draft) return draft;
     return {...settings.scopes.all,...settings.scopes[state.businessId]};
   }
-  function allowed(el) {
+  function allowed(el, templatePreview) {
     if (!el || el.closest(excluded)) return false;
-    if (document.body.dataset.admin==='true') return false;
+    if (!templatePreview && document.body.dataset.admin==='true') return false;
     if (el.closest('option') && (!el.hasAttribute('value') || /^\d+$/.test(el.value) || el.closest('#business-switcher,#welcome-business'))) return false;
     if (el.closest('tbody') && !el.closest('button')) return false;
     return true;
   }
-  function apply() {
-    scheduled = false;
-    const texts = scopeTexts(), next = [];
-    if(document.body.dataset.admin!=='true')document.title=texts[pageTitle]??pageTitle;
+  function apply(root = document.body, businessId = state.businessId) {
+    const templatePreview = root !== document.body;
+    if (!templatePreview) scheduled = false;
+    const texts = templatePreview ? {...settings.scopes.all, ...settings.scopes[businessId]} : scopeTexts();
+    if (templatePreview && !Object.keys(texts).length) return;
+    const next = [];
+    if(!templatePreview && document.body.dataset.admin!=='true')document.title=texts[pageTitle]??pageTitle;
     next.push({el:document.querySelector('.brand'),key:pageTitle,value:texts[pageTitle]??pageTitle});
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode, el = node.parentElement;
-      if (!allowed(el)) continue;
+      if (!allowed(el, templatePreview)) continue;
       let record = records.get(node);
       if (!record || node.nodeValue !== record.rendered) {
         const raw = node.nodeValue, original = raw.trim();
@@ -44,8 +47,8 @@ const interfaceCopy = (() => {
       next.push({el,key:record.key,value:texts[record.key]??record.key});
     }
     // Placeholder and accessible descriptions use attributes, never input values.
-    for (const el of document.querySelectorAll('[placeholder],[aria-label],[title]')) {
-      if (!allowed(el)) continue;
+    for (const el of root.querySelectorAll('[placeholder],[aria-label],[title]')) {
+      if (!allowed(el, templatePreview)) continue;
       let map = records.get(el); if(!map){map={};records.set(el,map);}
       for(const attr of ['placeholder','aria-label','title']) {
         if(!el.hasAttribute(attr)) continue;
@@ -57,10 +60,11 @@ const interfaceCopy = (() => {
         rec.rendered=value; next.push({el,key:rec.key,value});
       }
     }
+    if (templatePreview) return;
     entries=next;
     if(preview) parent.postMessage({type:'copy-list',entries:[...new Map(next.map(x=>[x.key,{key:x.key,value:x.value}])).values()]},location.origin);
   }
-  function schedule(){if(!scheduled){scheduled=true;requestAnimationFrame(apply);}}
+  function schedule(){if(!scheduled){scheduled=true;requestAnimationFrame(()=>apply());}}
   async function load(){settings=await api('/api/interface-copy');schedule();}
   function editor(target) {
     target.className='copy-editor';
@@ -123,5 +127,5 @@ const interfaceCopy = (() => {
       window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==parent)return;const data=event.data;if(data.type==='copy-config'){draft=data.texts;selecting=data.selecting;document.body.classList.toggle('copy-selecting',selecting);schedule();}if(data.type==='copy-page'&&data.view!=='admin'){setView(data.view);schedule();}});
     }
   });
-  return {preview,load,editor,ready(){if(preview)parent.postMessage({type:'copy-ready'},location.origin);}};
+  return {preview,load,editor,applyPreview:apply,ready(){if(preview)parent.postMessage({type:'copy-ready'},location.origin);}};
 })();
